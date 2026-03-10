@@ -2,7 +2,7 @@
 """
 SMART GRID ALIGNER (VECTOR SCALING FIX):
 - Fix lỗi "Curve must be on the datum plane" ở mặt đứng/mặt cắt.
-- Chỉ tác động lên Grid, bỏ qua Level.
+- Hỗ trợ Plan, Section, Elevation và Detail View.
 """
 from pyrevit import revit, DB, forms
 
@@ -18,10 +18,11 @@ def get_views_smart():
     
     def is_target_view(v):
         if v.IsTemplate: return False
+        # Đã bổ sung DB.ViewType.Detail vào danh sách hợp lệ
         valid_types = [
             DB.ViewType.FloorPlan, DB.ViewType.CeilingPlan, 
             DB.ViewType.EngineeringPlan, DB.ViewType.Section, 
-            DB.ViewType.Elevation
+            DB.ViewType.Elevation, DB.ViewType.Detail
         ]
         return v.ViewType in valid_types
 
@@ -106,11 +107,12 @@ def main_no_report():
     try: sheet_offset_mm = float(res)
     except: return
 
-    has_vertical = any(v.ViewType in [DB.ViewType.Section, DB.ViewType.Elevation] for v in views)
+    # Thêm Detail View vào check để hỏi về việc cắt sát mép trên
+    has_vertical = any(v.ViewType in [DB.ViewType.Section, DB.ViewType.Elevation, DB.ViewType.Detail] for v in views)
     snap_top_zero = False
     if has_vertical:
         snap_top_zero = forms.alert(
-            u"Phát hiện MẶT ĐỨNG/CẮT:\nBạn muốn Grid phía TRÊN cắt sát mép Crop (Offset = 0) không?",
+            u"Phát hiện MẶT ĐỨNG/CẮT/CHI TIẾT:\nBạn muốn Grid phía TRÊN cắt sát mép Crop (Offset = 0) không?",
             yes=True, no=True
         )
 
@@ -134,7 +136,7 @@ def main_no_report():
             y_min = b_min.Y - offset_val
             y_max = b_max.Y + offset_val
             
-            if snap_top_zero and view.ViewType in [DB.ViewType.Section, DB.ViewType.Elevation]:
+            if snap_top_zero and view.ViewType in [DB.ViewType.Section, DB.ViewType.Elevation, DB.ViewType.Detail]:
                  y_max = b_max.Y
 
             grids = DB.FilteredElementCollector(doc, view.Id).OfClass(DB.Grid).ToElements()

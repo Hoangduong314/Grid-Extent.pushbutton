@@ -1,14 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-SMART GRID ALIGNER (STRICT ORTHOGONAL PRIORITY):
-- Priority 1: Vertical/Horizontal Grids (Hard-locked to original axis).
-- Priority 2: Diagonal Grids (Vector intersection math).
-- Fix: Prevents vertical grids from drifting/locking like diagonal ones.
+SMART GRID ALIGNER (VECTOR SCALING FIX):
+- Fix lỗi "Curve must be on the datum plane" ở mặt đứng/mặt cắt.
+- Chỉ tác động lên Grid, bỏ qua Level.
 """
 from pyrevit import revit, DB, forms
-import math
 
-# --- CẤU HÌNH ---
 doc = revit.doc
 uidoc = revit.uidoc
 
@@ -16,7 +13,6 @@ def mm_to_ft(mm_val):
     return mm_val / 304.8
 
 def get_views_smart():
-    """Logic chọn View thông minh (Sheet hoặc Active View)"""
     sel_ids = uidoc.Selection.GetElementIds()
     selected_views = []
     
@@ -47,41 +43,32 @@ def get_views_smart():
 def to_view_cs(point, view_transform):
     return view_transform.Inverse.OfPoint(point)
 
-def to_world_cs(point, view_transform):
-    return view_transform.OfPoint(point)
-
-def solve_diagonal_intersection(p1, p2, x_min, x_max, y_min, y_max):
-    """
-    Logic tính toán CHỈ dành cho Grid chéo.
-    """
-    vec_original = p2 - p1
+def solve_diagonal_intersection(loc_pA, loc_pB, x_min, x_max, y_min, y_max):
+    vec_local = loc_pB - loc_pA
     candidates = []
     
-    dx = vec_original.X
-    dy = vec_original.Y
+    dx = vec_local.X
+    dy = vec_local.Y
     
-    # Tránh chia cho 0
     if abs(dx) < 1e-9: dx = 1e-9
     if abs(dy) < 1e-9: dy = 1e-9
 
-    # Tìm giao điểm với 4 cạnh
-    t_xmin = (x_min - p1.X) / dx
-    pt_xmin = DB.XYZ(x_min, p1.Y + t_xmin * dy, p1.Z)
+    t_xmin = (x_min - loc_pA.X) / dx
+    pt_xmin = DB.XYZ(x_min, loc_pA.Y + t_xmin * dy, loc_pA.Z)
     if y_min - 1e-4 <= pt_xmin.Y <= y_max + 1e-4: candidates.append(pt_xmin)
 
-    t_xmax = (x_max - p1.X) / dx
-    pt_xmax = DB.XYZ(x_max, p1.Y + t_xmax * dy, p1.Z)
+    t_xmax = (x_max - loc_pA.X) / dx
+    pt_xmax = DB.XYZ(x_max, loc_pA.Y + t_xmax * dy, loc_pA.Z)
     if y_min - 1e-4 <= pt_xmax.Y <= y_max + 1e-4: candidates.append(pt_xmax)
 
-    t_ymin = (y_min - p1.Y) / dy
-    pt_ymin = DB.XYZ(p1.X + t_ymin * dx, y_min, p1.Z)
+    t_ymin = (y_min - loc_pA.Y) / dy
+    pt_ymin = DB.XYZ(loc_pA.X + t_ymin * dx, y_min, loc_pA.Z)
     if x_min - 1e-4 <= pt_ymin.X <= x_max + 1e-4: candidates.append(pt_ymin)
 
-    t_ymax = (y_max - p1.Y) / dy
-    pt_ymax = DB.XYZ(p1.X + t_ymax * dx, y_max, p1.Z)
+    t_ymax = (y_max - loc_pA.Y) / dy
+    pt_ymax = DB.XYZ(loc_pA.X + t_ymax * dx, y_max, loc_pA.Z)
     if x_min - 1e-4 <= pt_ymax.X <= x_max + 1e-4: candidates.append(pt_ymax)
 
-    # Lọc trùng
     unique_pts = []
     for pt in candidates:
         if not any(pt.DistanceTo(e) < 1e-5 for e in unique_pts):
@@ -89,7 +76,6 @@ def solve_diagonal_intersection(p1, p2, x_min, x_max, y_min, y_max):
             
     if len(unique_pts) < 2: return None, None
 
-    # Tìm cặp xa nhất và đúng chiều
     best_start = None
     best_end = None
     max_dist = -1
@@ -102,7 +88,7 @@ def solve_diagonal_intersection(p1, p2, x_min, x_max, y_min, y_max):
             
             if dist > max_dist:
                 max_dist = dist
-                if (pt_b - pt_a).DotProduct(vec_original) > 0:
+                if (pt_b - pt_a).DotProduct(vec_local) > 0:
                     best_start, best_end = pt_a, pt_b
                 else:
                     best_start, best_end = pt_b, pt_a
@@ -110,19 +96,16 @@ def solve_diagonal_intersection(p1, p2, x_min, x_max, y_min, y_max):
     return best_start, best_end
 
 def main_no_report():
-    # 1. Chọn View
     views = get_views_smart()
     if not views:
         forms.alert("Không tìm thấy View hợp lệ.")
         return
 
-    # 2. Nhập Offset
     res = forms.ask_for_string(default="15", prompt="Nhập khoảng cách Offset (mm):", title="Smart Grid Align")
     if not res: return
     try: sheet_offset_mm = float(res)
     except: return
 
-    # 3. Top Zero Option
     has_vertical = any(v.ViewType in [DB.ViewType.Section, DB.ViewType.Elevation] for v in views)
     snap_top_zero = False
     if has_vertical:
@@ -131,11 +114,9 @@ def main_no_report():
             yes=True, no=True
         )
 
-    # 4. Process
     t = DB.Transaction(doc, "Adjust Grids")
     t.Start()
     try:
-        # Bật Crop Box trước
         for view in views:
              if not view.CropBoxActive:
                 view.CropBoxActive = True
@@ -145,7 +126,6 @@ def main_no_report():
             bbox = view.CropBox
             if not bbox: continue
             
-            # --- TÍNH TOÁN KHUNG BAO (BOUNDS) ---
             offset_val = mm_to_ft(sheet_offset_mm * view.Scale)
             b_min, b_max = bbox.Min, bbox.Max
             
@@ -154,7 +134,6 @@ def main_no_report():
             y_min = b_min.Y - offset_val
             y_max = b_max.Y + offset_val
             
-            # Xử lý riêng cho Section/Elevation nếu chọn Yes
             if snap_top_zero and view.ViewType in [DB.ViewType.Section, DB.ViewType.Elevation]:
                  y_max = b_max.Y
 
@@ -163,73 +142,55 @@ def main_no_report():
 
             for grid in grids:
                 try:
-                    # Reset Scope Box
                     p_scope = grid.LookupParameter("Scope Box")
                     if p_scope and p_scope.AsElementId().IntegerValue != -1:
                           p_scope.Set(DB.ElementId.InvalidElementId)
                     
-                    # Chuyển về 2D View Specific
                     grid.SetDatumExtentType(DB.DatumEnds.End0, view, DB.DatumExtentType.ViewSpecific)
                     grid.SetDatumExtentType(DB.DatumEnds.End1, view, DB.DatumExtentType.ViewSpecific)
                     
                     curves = grid.GetCurvesInView(DB.DatumExtentType.ViewSpecific, view)
                     if not curves or not isinstance(curves[0], DB.Line): continue
                     
-                    # Lấy tọa độ gốc trong View CS
-                    p1 = to_view_cs(curves[0].GetEndPoint(0), v_trans)
-                    p2 = to_view_cs(curves[0].GetEndPoint(1), v_trans)
+                    # --- TÍNH TOÁN THEO VECTOR ĐỂ CHỐNG LỆCH DATUM PLANE ---
+                    pA = curves[0].GetEndPoint(0)
+                    pB = curves[0].GetEndPoint(1)
+                    world_vec = pB - pA
                     
-                    dx_raw = abs(p1.X - p2.X)
-                    dy_raw = abs(p1.Y - p2.Y)
+                    loc_pA = to_view_cs(pA, v_trans)
+                    loc_pB = to_view_cs(pB, v_trans)
+                    loc_vec = loc_pB - loc_pA
                     
-                    np1, np2 = None, None
+                    dx_raw = abs(loc_vec.X)
+                    dy_raw = abs(loc_vec.Y)
+                    
+                    t1, t2 = None, None
 
-                    # --- LOGIC PHÂN TÁCH (QUAN TRỌNG) ---
-                    
-                    # CASE 1: Grid THẲNG ĐỨNG (Ưu tiên tuyệt đối)
+                    # CASE 1: THẲNG ĐỨNG
                     if dx_raw < 1e-9: 
-                        # GIỮ NGUYÊN tọa độ X gốc (Lấy trung bình để triệt tiêu sai số nhỏ nếu có)
-                        fixed_x = (p1.X + p2.X) / 2.0
-                        
-                        # Chỉ thay đổi Y theo bounds
-                        temp_p1 = DB.XYZ(fixed_x, y_min, p1.Z)
-                        temp_p2 = DB.XYZ(fixed_x, y_max, p1.Z)
-                        
-                        # Gán lại đúng chiều đầu/đuôi
-                        if p1.Y < p2.Y:
-                            np1, np2 = temp_p1, temp_p2
-                        else:
-                            np1, np2 = temp_p2, temp_p1
+                        t1 = (y_min - loc_pA.Y) / loc_vec.Y
+                        t2 = (y_max - loc_pA.Y) / loc_vec.Y
 
-                    # CASE 2: Grid NẰM NGANG (Ưu tiên tuyệt đối)
+                    # CASE 2: NẰM NGANG
                     elif dy_raw < 1e-9:
-                        # GIỮ NGUYÊN tọa độ Y gốc
-                        fixed_y = (p1.Y + p2.Y) / 2.0
-                        
-                        # Chỉ thay đổi X theo bounds
-                        temp_p1 = DB.XYZ(x_min, fixed_y, p1.Z)
-                        temp_p2 = DB.XYZ(x_max, fixed_y, p1.Z)
-                        
-                        # Gán lại đúng chiều trái/phải
-                        if p1.X < p2.X:
-                            np1, np2 = temp_p1, temp_p2
-                        else:
-                            np1, np2 = temp_p2, temp_p1
+                        t1 = (x_min - loc_pA.X) / loc_vec.X
+                        t2 = (x_max - loc_pA.X) / loc_vec.X
                             
-                    # CASE 3: Grid CHÉO (Xử lý sau cùng)
+                    # CASE 3: CHÉO
                     else:
-                        np1, np2 = solve_diagonal_intersection(p1, p2, x_min, x_max, y_min, y_max)
+                        np1, np2 = solve_diagonal_intersection(loc_pA, loc_pB, x_min, x_max, y_min, y_max)
+                        if np1 and np2:
+                            t1 = (np1.X - loc_pA.X) / loc_vec.X
+                            t2 = (np2.X - loc_pA.X) / loc_vec.X
 
-                    # --- ÁP DỤNG ---
-                    if np1 and np2:
-                        w_p1 = to_world_cs(np1, v_trans)
-                        w_p2 = to_world_cs(np2, v_trans)
+                    # --- ÁP DỤNG PARAMETER LÊN VECTOR GỐC ---
+                    if t1 is not None and t2 is not None:
+                        w_p1 = pA + world_vec * t1
+                        w_p2 = pA + world_vec * t2
                         
                         if w_p1.DistanceTo(w_p2) > mm_to_ft(10):
-                            # Tạo đường mới
                             nl = DB.Line.CreateBound(w_p1, w_p2)
                             
-                            # Kiểm tra lại direction lần cuối để chắc chắn Bubble không bị đảo
                             if not nl.Direction.IsAlmostEqualTo(curves[0].Direction):
                                 nl = DB.Line.CreateBound(w_p2, w_p1)
                                 

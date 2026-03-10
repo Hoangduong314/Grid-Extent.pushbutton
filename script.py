@@ -98,10 +98,10 @@ def solve_diagonal_intersection(loc_pA, loc_pB, x_min, x_max, y_min, y_max):
 def main_no_report():
     views = get_views_smart()
     if not views:
-        forms.alert("Không tìm thấy View hợp lệ.")
+        forms.alert(u"Không tìm thấy View hợp lệ.")
         return
 
-    res = forms.ask_for_string(default="15", prompt="Nhập khoảng cách Offset (mm):", title="Smart Grid Align")
+    res = forms.ask_for_string(default="15", prompt=u"Nhập khoảng cách Offset (mm):", title="Smart Grid Align")
     if not res: return
     try: sheet_offset_mm = float(res)
     except: return
@@ -110,7 +110,7 @@ def main_no_report():
     snap_top_zero = False
     if has_vertical:
         snap_top_zero = forms.alert(
-            "Phát hiện MẶT ĐỨNG/CẮT:\nBạn muốn Grid phía TRÊN cắt sát mép Crop (Offset = 0) không?",
+            u"Phát hiện MẶT ĐỨNG/CẮT:\nBạn muốn Grid phía TRÊN cắt sát mép Crop (Offset = 0) không?",
             yes=True, no=True
         )
 
@@ -119,7 +119,7 @@ def main_no_report():
     try:
         for view in views:
              if not view.CropBoxActive:
-                view.CropBoxActive = True
+                 view.CropBoxActive = True
         doc.Regenerate()
 
         for view in views:
@@ -152,7 +152,6 @@ def main_no_report():
                     curves = grid.GetCurvesInView(DB.DatumExtentType.ViewSpecific, view)
                     if not curves or not isinstance(curves[0], DB.Line): continue
                     
-                    # --- TÍNH TOÁN THEO VECTOR ĐỂ CHỐNG LỆCH DATUM PLANE ---
                     pA = curves[0].GetEndPoint(0)
                     pB = curves[0].GetEndPoint(1)
                     world_vec = pB - pA
@@ -183,7 +182,6 @@ def main_no_report():
                             t1 = (np1.X - loc_pA.X) / loc_vec.X
                             t2 = (np2.X - loc_pA.X) / loc_vec.X
 
-                    # --- ÁP DỤNG PARAMETER LÊN VECTOR GỐC ---
                     if t1 is not None and t2 is not None:
                         w_p1 = pA + world_vec * t1
                         w_p2 = pA + world_vec * t2
@@ -201,7 +199,7 @@ def main_no_report():
         uidoc.RefreshActiveView()
     except Exception as e:
         t.RollBack()
-        forms.alert("Lỗi: " + str(e))
+        forms.alert(u"Lỗi: " + str(e))
 
 if __name__ == '__main__':
     main_no_report()

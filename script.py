@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 SMART GRID ALIGNER (VECTOR SCALING FIX):
-- Fix lỗi "Curve must be on the datum plane" ở mặt đứng/mặt cắt.
-- Hỗ trợ Plan, Section, Elevation và Detail View.
+- Fixes the "Curve must be on the datum plane" error in sections/elevations.
+- Supports Plan, Section, Elevation, and Detail Views.
+- Fully English version to prevent UnicodeEncodeError in pyRevit.
 """
 from pyrevit import revit, DB, forms
 
@@ -18,7 +19,7 @@ def get_views_smart():
     
     def is_target_view(v):
         if v.IsTemplate: return False
-        # Đã bổ sung DB.ViewType.Detail vào danh sách hợp lệ
+        # Includes Detail View
         valid_types = [
             DB.ViewType.FloorPlan, DB.ViewType.CeilingPlan, 
             DB.ViewType.EngineeringPlan, DB.ViewType.Section, 
@@ -51,6 +52,7 @@ def solve_diagonal_intersection(loc_pA, loc_pB, x_min, x_max, y_min, y_max):
     dx = vec_local.X
     dy = vec_local.Y
     
+    # Avoid division by zero
     if abs(dx) < 1e-9: dx = 1e-9
     if abs(dy) < 1e-9: dy = 1e-9
 
@@ -99,26 +101,26 @@ def solve_diagonal_intersection(loc_pA, loc_pB, x_min, x_max, y_min, y_max):
 def main_no_report():
     views = get_views_smart()
     if not views:
-        forms.alert(u"Không tìm thấy View hợp lệ.")
+        forms.alert("No valid View found. Please open a Plan, Section, Elevation, or Detail view.")
         return
 
-    res = forms.ask_for_string(default="15", prompt=u"Nhập khoảng cách Offset (mm):", title="Smart Grid Align")
+    res = forms.ask_for_string(default="15", prompt="Enter Offset distance (mm):", title="Smart Grid Align")
     if not res: return
     try: sheet_offset_mm = float(res)
     except: return
 
-    # Thêm Detail View vào check để hỏi về việc cắt sát mép trên
     has_vertical = any(v.ViewType in [DB.ViewType.Section, DB.ViewType.Elevation, DB.ViewType.Detail] for v in views)
     snap_top_zero = False
     if has_vertical:
         snap_top_zero = forms.alert(
-            u"Phát hiện MẶT ĐỨNG/CẮT/CHI TIẾT:\nBạn muốn Grid phía TRÊN cắt sát mép Crop (Offset = 0) không?",
+            "SECTION / ELEVATION / DETAIL detected:\nDo you want the TOP grids to snap exactly to the Crop edge (Offset = 0)?",
             yes=True, no=True
         )
 
-    t = DB.Transaction(doc, "Adjust Grids")
+    t = DB.Transaction(doc, "Adjust Grids Extent")
     t.Start()
     try:
+        # Enable Crop Box first
         for view in views:
              if not view.CropBoxActive:
                  view.CropBoxActive = True
@@ -167,17 +169,17 @@ def main_no_report():
                     
                     t1, t2 = None, None
 
-                    # CASE 1: THẲNG ĐỨNG
+                    # CASE 1: VERTICAL
                     if dx_raw < 1e-9: 
                         t1 = (y_min - loc_pA.Y) / loc_vec.Y
                         t2 = (y_max - loc_pA.Y) / loc_vec.Y
 
-                    # CASE 2: NẰM NGANG
+                    # CASE 2: HORIZONTAL
                     elif dy_raw < 1e-9:
                         t1 = (x_min - loc_pA.X) / loc_vec.X
                         t2 = (x_max - loc_pA.X) / loc_vec.X
                             
-                    # CASE 3: CHÉO
+                    # CASE 3: DIAGONAL
                     else:
                         np1, np2 = solve_diagonal_intersection(loc_pA, loc_pB, x_min, x_max, y_min, y_max)
                         if np1 and np2:
@@ -201,7 +203,7 @@ def main_no_report():
         uidoc.RefreshActiveView()
     except Exception as e:
         t.RollBack()
-        forms.alert(u"Lỗi: " + str(e))
+        forms.alert("Error: " + str(e))
 
 if __name__ == '__main__':
     main_no_report()
